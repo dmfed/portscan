@@ -4,65 +4,98 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
-func connect(addr net.TCPAddr, timeout time.Duration, result chan string, done chan bool) {
-	conn, err := net.DialTimeout("tcp", addr.String(), timeout)
-	if err == nil {
-		result <- fmt.Sprintf("%v accepting connections", addr.String())
-		conn.Close()
-	} /* else {
-		result <- "" //err.Error()
-	}*/
-	done <- true
+type Scanner struct {
+	IP        net.IP
+	StartPort int
+	EndPort   int
+	Maxconn   int
+	Timeout   time.Duration
 }
 
-func scanPorts(addr *net.IPAddr, start, end, maxconn int, connect func(net.TCPAddr, chan string, chan bool)) chan string {
-	comm := make(chan string, maxconn)
-	done := make(chan bool, maxconn)
+func New(ip ...string) *Scanner {
+	var s Scanner
+	if len(ip) > 0 {
+		s.IP = net.ParseIP(ip[0])
+	} else {
+		s.IP = net.ParseIP("127.0.0.1")
+	}
+	s.StartPort = 0
+	s.EndPort = 1000
+	s.Maxconn = 1
+	s.Timeout = time.Second
+	return &s
+}
+
+// Scan returns slice of net.TCPAddr which accepted connection
+func (s *Scanner) Scan() []net.TCPAddr {
+	addrchan := scanPorts(s.IP, s.StartPort, s.EndPort, s.Maxconn, s.Timeout)
+	acceptingAddresses := []net.TCPAddr{}
+	for addr := range addrchan {
+		acceptingAddresses = append(acceptingAddresses, addr)
+	}
+	return acceptingAddresses
+}
+
+// ScanAndPrint scans addresses and instantly prints out the results
+// Having finished it prints out total time taken by test
+func (s *Scanner) ScanAndPrint() {
+	t := time.Now()
+	addrchan := scanPorts(s.IP, s.StartPort, s.EndPort, s.Maxconn, s.Timeout)
+	for addr := range addrchan {
+		fmt.Printf("%s accepting connection\n", addr.String())
+	}
+	fmt.Println("scanned in:", time.Since(t))
+}
+
+func (s *Scanner) SetIP(ip string) {
+	s.IP = net.ParseIP(ip)
+}
+
+func (s *Scanner) SetPorts(start, end int) {
+	s.StartPort = start
+	s.EndPort = end
+}
+
+func (s *Scanner) SetMaxConn(maxconn int) {
+	s.Maxconn = maxconn
+}
+
+func (s *Scanner) SetTimeOut(t time.Duration) {
+	s.Timeout = t
+}
+
+func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan net.TCPAddr {
+	comm := make(chan net.TCPAddr, maxconn)
 	open := 0
 	go func() {
+		var wg sync.WaitGroup
 		for start <= end {
 			if open < maxconn {
-				tcp := net.TCPAddr{IP: addr.IP, Port: start}
-				go connect(tcp, comm, done)
+				tcp := net.TCPAddr{IP: addr, Port: start}
+				wg.Add(1)
 				start++
 				open++
-			}
-			select {
-			case <-done:
-				open--
-			default:
+				go func() {
+					conn, err := net.DialTimeout("tcp", tcp.String(), timeout)
+					if err == nil {
+						comm <- tcp
+						conn.Close()
+					}
+					wg.Done()
+					open--
+				}()
+			} else {
+				time.Sleep(time.Millisecond)
 			}
 		}
-		for i := 0; i < open; i++ {
-			<-done // Make sure all connecting goroutines finished
-		}
-		close(done)
+		wg.Wait()
 		close(comm)
 	}()
 	return comm
-}
-
-func getConnFunc(timeout time.Duration) func(net.TCPAddr, chan string, chan bool) {
-	return func(addr net.TCPAddr, result chan string, done chan bool) {
-		connect(addr, timeout, result, done)
-	}
-}
-
-func getScanner(start, end, maxconn int, connect func(net.TCPAddr, chan string, chan bool)) func(*net.IPAddr) chan string {
-	return func(ip *net.IPAddr) chan string {
-		return scanPorts(ip, start, end, maxconn, connect)
-	}
-}
-
-func readAndPrint(input chan string) {
-	t := time.Now()
-	for result := range input {
-		fmt.Println(result)
-	}
-	fmt.Println("scanned in:", time.Since(t))
 }
 
 func main() {
@@ -74,15 +107,17 @@ func main() {
 		timeout = flag.Duration("t", time.Second, "connection timeout")
 	)
 	flag.Parse()
-	ip, err := net.ResolveIPAddr("ip", *address)
+	_, err := net.ResolveIPAddr("ip", *address)
 	if err != nil {
 		fmt.Println("resolve err:", err)
 		return
 	}
+	scanner := New(*address)
 	if *endport < *port {
 		*endport = *port
 	}
-	connfunc := getConnFunc(*timeout)
-	scanner := getScanner(*port, *endport, *maxconn, connfunc)
-	readAndPrint(scanner(ip))
+	scanner.SetPorts(*port, *endport)
+	scanner.SetMaxConn(*maxconn)
+	scanner.SetTimeOut(*timeout)
+	scanner.ScanAndPrint()
 }
