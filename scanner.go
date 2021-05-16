@@ -70,27 +70,23 @@ func (s *Scanner) SetTimeOut(t time.Duration) {
 
 func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan net.TCPAddr {
 	comm := make(chan net.TCPAddr, maxconn)
-	open := 0
+	open := make(chan struct{}, maxconn) // semaphore
 	go func() {
 		var wg sync.WaitGroup
 		for start <= end {
-			if open < maxconn {
-				tcp := net.TCPAddr{IP: addr, Port: start}
-				wg.Add(1)
-				start++
-				open++
-				go func() {
-					conn, err := net.DialTimeout("tcp", tcp.String(), timeout)
-					if err == nil {
-						comm <- tcp
-						conn.Close()
-					}
-					wg.Done()
-					open--
-				}()
-			} else {
-				time.Sleep(time.Millisecond)
-			}
+			open <- struct{}{}
+			tcp := net.TCPAddr{IP: addr, Port: start}
+			wg.Add(1)
+			start++
+			go func() {
+				conn, err := net.DialTimeout("tcp", tcp.String(), timeout)
+				if err == nil {
+					comm <- tcp
+					conn.Close()
+				}
+				wg.Done()
+				<-open
+			}()
 		}
 		wg.Wait()
 		close(comm)
