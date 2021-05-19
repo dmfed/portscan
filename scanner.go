@@ -43,6 +43,7 @@ func (s *Scanner) Scan() []net.TCPAddr {
 // ScanAndPrint scans addresses and instantly prints out the results
 // Having finished it prints out total time taken by test
 func (s *Scanner) ScanAndPrint() {
+	fmt.Println("Scanning", s.IP)
 	t := time.Now()
 	addrchan := scanPorts(s.IP, s.StartPort, s.EndPort, s.Maxconn, s.Timeout)
 	for addr := range addrchan {
@@ -70,8 +71,8 @@ func (s *Scanner) SetTimeOut(t time.Duration) {
 
 func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan net.TCPAddr {
 	comm := make(chan net.TCPAddr, maxconn)
-	open := make(chan struct{}, maxconn) // semaphore
 	go func() {
+		open := make(chan struct{}, maxconn) // semaphore
 		var wg sync.WaitGroup
 		for start <= end {
 			open <- struct{}{}
