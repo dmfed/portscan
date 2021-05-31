@@ -75,7 +75,7 @@ func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan
 		open := make(chan struct{}, maxconn) // semaphore
 		var wg sync.WaitGroup
 		for start <= end {
-			open <- struct{}{}
+			open <- struct{}{} // acquire
 			tcp := net.TCPAddr{IP: addr, Port: start}
 			wg.Add(1)
 			start++
@@ -86,7 +86,7 @@ func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan
 					conn.Close()
 				}
 				wg.Done()
-				<-open
+				<-open // release
 			}()
 		}
 		wg.Wait()
@@ -98,8 +98,8 @@ func scanPorts(addr net.IP, start, end, maxconn int, timeout time.Duration) chan
 func main() {
 	var (
 		address = flag.String("addr", "127.0.0.1", "ip address to connect to")
-		port    = flag.Int("p", 22, "port to connect to")
-		endport = flag.Int("pe", 0, "ending port, if 0, then will only scan -port")
+		port    = flag.Int("p", 1, "port to connect to")
+		endport = flag.Int("pe", 100, "ending port, if 0, then will only scan -p")
 		maxconn = flag.Int("maxconn", 10, "maximum simultaneous connections to open")
 		timeout = flag.Duration("t", time.Second, "connection timeout")
 	)
